@@ -361,6 +361,13 @@ export const diag = {
   restarts: 0,
   /** Milliseconds the last transcription round-trip took. */
   idleMs: 0,
+  /** The input device the browser actually opened, by its own name. */
+  mic: '',
+  /** True when the OS reports that device as muted. */
+  micMuted: false,
+  /** Loudest input in the last few seconds, as a share of the speech trigger
+   *  level: below 1 means nothing has been loud enough to count as speech. */
+  peak: 0,
 }
 
 /** Record why a transcript went nowhere. Silence always has a reason; this is
@@ -388,7 +395,15 @@ if (typeof window !== 'undefined') {
  */
 export async function startVoice(h: VoiceHandlers): Promise<Voice> {
   try {
-    await getMic()
+    const track = (await getMic()).getAudioTracks()[0]
+    // Which microphone, by name: the most common deafness is simply the wrong
+    // one — a webcam mic across the room, or a headset that is not plugged in.
+    diag.mic = track?.label || 'unnamed device'
+    diag.micMuted = Boolean(track?.muted)
+    if (track) {
+      track.onmute = () => (diag.micMuted = true)
+      track.onunmute = () => (diag.micMuted = false)
+    }
   } catch (err) {
     diag.lastError = 'mic'
     h.onError(
@@ -596,6 +611,10 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
     // over, and letting the hold expire later would open the next one with a
     // fragment of the last.
     if ((mode === 'wake' || mode === 'deaf') && assemble.held()) assemble.cancel()
+    // Input level against the speech trigger, held for a few seconds so the
+    // diagnostics panel can show whether talking ever gets loud enough.
+    const m = vad?.meter()
+    if (m && m.threshold > 0) diag.peak = Math.max(m.energy / m.threshold, diag.peak * 0.93)
   }, 200)
 
   return {

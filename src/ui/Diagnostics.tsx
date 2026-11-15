@@ -30,6 +30,10 @@ type VoiceDiag = {
   accepted: number
   restarts: number
   idleMs: number
+  engine: string
+  mic: string
+  micMuted: boolean
+  peak: number
 }
 
 type TtsDiag = {
@@ -104,6 +108,15 @@ export function Diagnostics() {
       </div>
 
       <div className="diag-sec">LISTENING</div>
+      <Row k="engine" v={v.engine === 'elevenlabs' ? 'ElevenLabs Scribe' : 'browser speech'} />
+      <Row k="microphone" v={v.micMuted ? `${v.mic} — MUTED` : v.mic || '—'} bad={!v.mic || v.micMuted} />
+      {v.engine === 'elevenlabs' && (
+        <Row
+          k="input level"
+          v={`${Math.round((v.peak ?? 0) * 100)}% of trigger${(v.peak ?? 0) < 1 ? ' (talk: below 100% is not heard)' : ''}`}
+          bad={(v.peak ?? 0) < 1}
+        />
+      )}
       <Row k="recogniser" v={v.running ? 'running' : 'STOPPED'} bad={!v.running} />
       <Row k="sessions" v={String(v.sessions ?? 0)} />
       <Row
