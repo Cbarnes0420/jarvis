@@ -424,6 +424,27 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
   let draining = false
 
   /**
+   * A refused transcription used to be recorded only in the diagnostics panel,
+   * so a bad key or a spent allowance looked exactly like not being heard. Two
+   * failures in a row with nothing transcribed between them earn a message on
+   * screen; the bridge terminal logs ElevenLabs' own reason.
+   */
+  let sttFailures = 0
+  const sttFault = (status: number) => {
+    sttFailures++
+    if (sttFailures !== 2) return
+    h.onError(
+      status === 401 || status === 403
+        ? 'ElevenLabs refused the key, so he cannot hear you. Check it has the Speech to Text permission, and turn off any VPN. The JARVIS terminal has the details.'
+        : status === 402 || status === 429
+          ? 'The ElevenLabs allowance is used up or rate-limited, so he cannot hear you. The JARVIS terminal has the details.'
+          : status === 0
+            ? 'Cannot reach the JARVIS bridge to transcribe speech. Is the terminal running npm start still open?'
+            : `Transcription is failing (${status}), so he cannot hear you. The JARVIS terminal has the details.`,
+    )
+  }
+
+  /**
    * Transcripts become turns here rather than one-per-segment.
    * See makeAssembler for why.
    */
@@ -460,11 +481,13 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
         diag.restarts++
         diag.lastError = `stt ${res.status}`
         drop(`transcription failed (${res.status})`)
+        sttFault(res.status)
         return
       }
       const { text } = (await res.json()) as { text?: string }
       const said = (text ?? '').trim()
       diag.lastError = ''
+      sttFailures = 0
 
       if (!said) {
         drop('nothing intelligible in the segment')
@@ -501,6 +524,7 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
       diag.restarts++
       diag.lastError = String(err)
       drop('could not reach the speech service')
+      sttFault(0)
     }
   }
 

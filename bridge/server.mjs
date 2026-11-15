@@ -492,6 +492,42 @@ const SYSTEM_PROMPT = [
 ].join('')
 
 /**
+ * Say in the terminal when ElevenLabs turns a request down.
+ *
+ * These used to go straight back to the browser and nowhere else, so a key
+ * without the Speech to Text permission, a spent free allowance or the free
+ * tier's "unusual activity" block left JARVIS deaf with a perfectly quiet
+ * terminal. Logged once per kind and status, so a refused key is one line, not
+ * one line per sentence. The response body is ElevenLabs' own error message;
+ * it never contains the key.
+ */
+const elevenFaultsSeen = new Set()
+function logElevenFault(kind, status, body) {
+  const seen = `${kind} ${status}`
+  if (elevenFaultsSeen.has(seen)) return
+  elevenFaultsSeen.add(seen)
+  let detail = String(body ?? '')
+  try {
+    const parsed = JSON.parse(detail)
+    const d = parsed?.detail ?? parsed
+    detail = typeof d === 'string' ? d : (d?.message ?? JSON.stringify(d))
+  } catch {
+    /* plain text */
+  }
+  const hint =
+    status === 401 || status === 403
+      ? ' (check the key and that it has the Text to Speech and Speech to Text permissions; free accounts are also blocked behind a VPN)'
+      : status === 402 || status === 429
+        ? ' (the ElevenLabs allowance is used up or rate-limited)'
+        : status === 'unreachable'
+          ? ' (could not connect to api.elevenlabs.io: check your connection, firewall, antivirus or VPN)'
+          : ''
+  console.warn(
+    `[jarvis] ElevenLabs ${kind} refused: ${status} ${String(detail).slice(0, 200)}${hint}`,
+  )
+}
+
+/**
  * ElevenLabs credentials, borrowed from the MCP server config.
  *
  * If you've set up the elevenlabs MCP server, the key is already on this
@@ -924,8 +960,10 @@ const handleRequest = async (req, res) => {
         },
       )
       if (!upstream.ok) {
+        const body = await upstream.text()
+        logElevenFault('speech', upstream.status, body)
         res.writeHead(upstream.status, cors)
-        return res.end(await upstream.text())
+        return res.end(body)
       }
 
       // Pipe it through rather than buffering. Waiting for the whole file here
@@ -938,6 +976,7 @@ const handleRequest = async (req, res) => {
       for await (const chunk of upstream.body) res.write(Buffer.from(chunk))
       return res.end()
     } catch (err) {
+      logElevenFault('speech', 'unreachable', err?.cause?.code ?? err?.message ?? err)
       res.writeHead(502, cors)
       return res.end(String(err?.message ?? err))
     }
@@ -1008,13 +1047,16 @@ const handleRequest = async (req, res) => {
         body: form,
       })
       if (!upstream.ok) {
+        const body = await upstream.text()
+        logElevenFault('transcription', upstream.status, body)
         res.writeHead(upstream.status, cors)
-        return res.end(await upstream.text())
+        return res.end(body)
       }
       const data = await upstream.json()
       res.writeHead(200, { ...cors, 'content-type': 'application/json' })
       return res.end(JSON.stringify({ text: (data.text ?? '').trim() }))
     } catch (err) {
+      logElevenFault('transcription', 'unreachable', err?.cause?.code ?? err?.message ?? err)
       res.writeHead(502, cors)
       return res.end(String(err?.message ?? err))
     }
