@@ -599,6 +599,23 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
  * between "the wake word stopped working halfway through the lesson" and an
  * assistant that keeps listening.
  */
+/**
+ * Recogniser errors that repeat on every restart and leave him deaf, with what
+ * to tell the user. `no-speech` and `aborted` are routine and stay silent.
+ */
+const BROWSER_STT_FAULTS: Record<string, string> = {
+  network:
+    "Can't reach the browser's speech service, so he can't hear you. Use Google Chrome (Edge and Brave often fail here), check your connection, or add an ElevenLabs key.",
+  'audio-capture':
+    'No working microphone found. Plug one in, pick it in Windows sound settings and in the site permissions next to the address bar, then reload.',
+  'language-not-supported':
+    "The browser's speech service doesn't support this language. Use Google Chrome, or add an ElevenLabs key.",
+}
+/** Report after a few in a row, so one transient blip stays quiet. */
+const FAULT_REPORT_AFTER = 3
+/** Once reported, retry slowly instead of hammering a dead service. */
+const FAULT_RETRY_MS = 3000
+
 function startBrowserVoice(h: VoiceHandlers): Voice {
   const Ctor =
     (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition
@@ -617,6 +634,8 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
   let lastWake = 0
   let lastAlive = Date.now()
   let silenceTimer: ReturnType<typeof setTimeout> | null = null
+  /** Consecutive recogniser faults since the last thing it actually heard. */
+  let failures = 0
 
   /** Same assembly rules as the premium path — a pause is not a full stop. */
   const assemble = makeAssembler({
@@ -685,6 +704,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
 
   const onResult = (e: any) => {
     touch()
+    failures = 0
     const mode = h.mode()
     diag.mode = mode
     if (mode === 'deaf') {
@@ -769,11 +789,21 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     }
     rec.onresult = onResult
     rec.onerror = (ev: any) => {
-      diag.lastError = String(ev.error ?? '')
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      const code = String(ev.error ?? '')
+      diag.lastError = code
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
         stopped = true
         diag.running = false
         h.onError('Microphone access was refused — voice input is unavailable.')
+        return
+      }
+      // These used to be swallowed: the session ended, respun 80ms later, failed
+      // the same way, forever — a reactor that looks alive and never hears a
+      // word. Say what is wrong, once per run of failures, and back off.
+      const why = BROWSER_STT_FAULTS[code]
+      if (why) {
+        failures++
+        if (failures === FAULT_REPORT_AFTER) h.onError(why)
       }
     }
     rec.onend = () => {
@@ -781,7 +811,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
       diag.running = false
       touch()
       rec = null
-      if (!stopped) setTimeout(spin, 80)
+      if (!stopped) setTimeout(spin, failures >= FAULT_REPORT_AFTER ? FAULT_RETRY_MS : 80)
     }
     try {
       rec.start()
