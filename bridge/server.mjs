@@ -1520,6 +1520,14 @@ wss.on('connection', (socket) => {
             // nothing to say — the HUD stops spinning and JARVIS stands there
             // silent. Say what happened instead.
             if (msg.subtype === 'success') {
+              // The CLI reports a missing login as a successful turn whose
+              // answer is the complaint. Say so in the terminal, where the
+              // person who can fix it is looking.
+              if (/not logged in|please run \/login|invalid api key/i.test(msg.result ?? '')) {
+                console.error(
+                  `[jarvis] Claude Code refused: ${msg.result}. Open another terminal, run \`claude\` and log in, then restart JARVIS.`,
+                )
+              }
               sendTurn({
                 type: 'done',
                 text: msg.result ?? '',
