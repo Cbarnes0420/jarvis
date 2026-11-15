@@ -1085,7 +1085,11 @@ if (!LOOPBACK) {
   )
 }
 console.log(
-  `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
+  `[jarvis] speech ${
+    !elevenKey()
+      ? 'using browser fallback voice'
+      : `via ElevenLabs (key from ${process.env.ELEVENLABS_API_KEY ? 'ELEVENLABS_API_KEY' : 'MCP config'})`
+  }`,
 )
 console.log(`[jarvis] model ${MODEL} · effort ${EFFORT}`)
 console.log(
