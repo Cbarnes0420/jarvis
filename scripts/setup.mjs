@@ -35,9 +35,13 @@ if (nodeVersionOk(process.versions.node)) {
 }
 
 // --- Claude CLI on PATH ---------------------------------------------------
+// On Windows an npm-installed CLI is `claude.cmd`, which Node only runs through
+// a shell. The command lines are fixed strings, so the shell adds no risk; they
+// go in as one string because Node deprecates args arrays with shell: true.
+const viaShell = process.platform === 'win32';
 let claudeFound = false;
 try {
-  const res = spawnSync('claude', ['--version'], { encoding: 'utf8', timeout: 10000 });
+  const res = spawnSync(viaShell ? 'claude --version' : 'claude', viaShell ? [] : ['--version'], { encoding: 'utf8', timeout: 10000, shell: viaShell });
   if (res.status === 0 && res.stdout) {
     claudeFound = true;
     line(tick, `Claude CLI found: ${res.stdout.trim()}`);
@@ -58,7 +62,7 @@ if (!claudeFound) {
 if (claudeFound) {
   let state = 'unknown';
   try {
-    const res = spawnSync('claude', ['auth', 'status'], { encoding: 'utf8', timeout: 10000 });
+    const res = spawnSync(viaShell ? 'claude auth status' : 'claude', viaShell ? [] : ['auth', 'status'], { encoding: 'utf8', timeout: 10000, shell: viaShell });
     state = loginState(res.stdout);
   } catch {
     // leave it unknown
