@@ -272,11 +272,16 @@ export default function App() {
     const phase = store.getState().phase
     if (phase === 'offline' || phase === 'boot' || phase === 'dormant') return
 
-    const wasBusy =
-      phase === 'thinking' || phase === 'tooling' || phase === 'speaking'
+    // Thinking or running a tool: there is no voice of his to cut off, and a
+    // burst of sound is not yet a question. Cancelling here threw the answer
+    // away on any two seconds of noise — a fan, a television, his own "Yes,
+    // sir?" coming back through the speakers — and since the noise carried no
+    // words, nothing replaced it: the question sat on screen unanswered. Wait
+    // for actual words instead; onUtterance cancels the turn if they come.
+    if (phase === 'thinking' || phase === 'tooling') return
 
     silence()
-    if (wasBusy) {
+    if (phase === 'speaking') {
       // Abandon the answer in flight. The turn counter moves in respond()'s
       // replacement; bumping it here covers the case where nothing replaces it.
       turn.current++
@@ -293,18 +298,31 @@ export default function App() {
     const phase = store.getState().phase
     if (phase === 'offline' || phase === 'boot' || phase === 'dormant') return
 
+    // Still working on the last question (see onSpeechStart). A bare "Jarvis"
+    // leaves it alone; real words replace it.
+    const busy = phase === 'thinking' || phase === 'tooling'
+
     // People keep using his name as a vocative once they're already talking to
     // him. Strip it rather than sending "jarvis" to the model as a question.
     if (BARE_NAME.test(text)) {
-      listen(AWAIT_SPEECH_MS)
+      if (!busy) listen(AWAIT_SPEECH_MS)
       return
     }
     const said = text.replace(LEADING_NAME, '').trim()
     if (!said) {
-      listen(AWAIT_SPEECH_MS)
+      if (!busy) listen(AWAIT_SPEECH_MS)
       return
     }
 
+    if (busy) {
+      // A new question while the old one is in flight: drop the old answer
+      // before asking, the way a barge-in does.
+      silence()
+      turn.current++
+      interrupt()
+      store.getState().setActiveTool(null)
+      music.working(false)
+    }
     void respond(said)
   }
 
